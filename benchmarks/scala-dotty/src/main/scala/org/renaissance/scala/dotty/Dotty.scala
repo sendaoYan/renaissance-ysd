@@ -181,7 +181,9 @@ final class Dotty extends Benchmark {
     //
     // If this class was loaded by a URLClassLoader, get the JAR file
     // resource URLs, extract them into a library directory and build
-    // the class path from the extracted files.
+    // the class path from the extracted files. Only URLs using the
+    // 'resource' protocol can be extracted; other URLs (e.g. a local
+    // tools.jar appended by the module loader on JDK 8) are skipped.
     //
     // Otherwise, fall back to the current class path (we may be running
     // without module loading with all jars specified on the command line).
@@ -190,7 +192,11 @@ final class Dotty extends Benchmark {
       case ucl: URLClassLoader =>
         import scala.jdk.CollectionConverters._
 
-        val resourcePaths = ucl.getURLs.map(_.getPath).toIterable.asJava
+        val resourcePaths = ucl.getURLs
+          .filter(_.getProtocol == "resource")
+          .map(_.getPath)
+          .toIterable
+          .asJava
 
         Files.createDirectories(libDir)
         val jarPaths = ResourceUtils.extractResources(resourcePaths, libDir)

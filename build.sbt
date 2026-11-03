@@ -64,7 +64,7 @@ ThisBuild / patchedJavaRelease := None
 //
 // Compilation settings
 //
-val javaRelease = "11"
+val javaRelease = "8"
 val scalaVersion212 = "2.12.20"
 val scalaVersion213 = "2.13.15"
 val scalaVersion3 = "3.3.4"
@@ -170,10 +170,16 @@ val generateManifestAttributesTask = Def.task {
 //
 
 val arrowVersion = "18.0.0"
+// Arrow 14.x is the last series whose class files target Java 8, and 14.0.1
+// contains the fix for CVE-2023-47248. Used by the Spark benchmarks only;
+// neo4j requires Java 17 and keeps using arrowVersion.
+val sparkArrowVersion = "14.0.1"
 // ASM 9.7+ requires Java 11.
 val asmVersion = "9.7.1"
 // Caffeine 3.0+ requires Java 11.
 val caffeineVersion = "3.1.8"
+// Caffeine 2.x is the last series that supports Java 8.
+val finagleCaffeineVersion = "2.9.3"
 val commonsCompressVersion = "1.27.1"
 val commonsIoVersion = "2.17.0"
 val commonsLang3Version = "3.17.0"
@@ -190,7 +196,8 @@ val nettyTomcatNativeVersion = "2.0.69.Final"
 val nettyVersion = "4.1.114.Final"
 val parquetVersion = "1.14.3"
 val ktorVersion = "3.6.0"
-val logbackVersion = "1.6.5"
+// Logback 1.3.x is the last series that supports Java 8 (1.4+ requires Java 11).
+val logbackVersion = "1.3.14"
 val scalaCollectionCompatVersion = "2.12.0"
 val scalaParallelCollectionsVersion = "1.0.4"
 val scalaParserCombinatorsVersion = "2.4.0"
@@ -202,7 +209,7 @@ lazy val renaissanceCore = (project in file("renaissance-core"))
     name := "renaissance-core",
     commonSettingsNoScala,
     Compile / mainClass := Some(launcherMainClass),
-    Compile / javacOptions := Seq("--release", "9")
+    Compile / javacOptions := Seq("--release", "8")
   )
 
 val renaissanceHarnessCommonSettings = Seq(
@@ -213,7 +220,7 @@ val renaissanceHarnessCommonSettings = Seq(
     "io.spray" %% "spray-json" % "1.3.6"
   ),
   Compile / mainClass := Some(harnessMainClass),
-  Compile / javacOptions := Seq("--release", "9"),
+  Compile / javacOptions := Seq("--release", "8"),
   Compile / packageBin / packageOptions += generateManifestAttributesTask.value
 )
 
@@ -222,7 +229,7 @@ lazy val renaissanceHarness3 = (project in file("renaissance-harness"))
     name := "renaissance-harness_3",
     commonSettingsScala3,
     renaissanceHarnessCommonSettings,
-    scalacOptions := Seq("-java-output-version", "9")
+    scalacOptions := Seq("-java-output-version", "8")
   )
   .dependsOn(renaissanceCore % "provided")
 
@@ -231,7 +238,7 @@ lazy val renaissanceHarness213 = (project in file("renaissance-harness"))
     name := "renaissance-harness_2.13",
     commonSettingsScala213,
     renaissanceHarnessCommonSettings,
-    scalacOptions := Seq("-release:9")
+    scalacOptions := Seq("-release:8")
   )
   .dependsOn(renaissanceCore % "provided")
 
@@ -240,7 +247,7 @@ lazy val renaissanceHarness212 = (project in file("renaissance-harness"))
     name := "renaissance-harness_2.12",
     commonSettingsScala212,
     renaissanceHarnessCommonSettings,
-    scalacOptions := Seq("-release:9"),
+    scalacOptions := Seq("-release:8"),
     libraryDependencies ++= Seq(
       // Needed to compile Scala 2.13 collections with Scala 2.12.
       "org.scala-lang.modules" %% "scala-collection-compat" % scalaCollectionCompatVersion
@@ -327,6 +334,12 @@ lazy val sparkUnsafePatch = (project in file("benchmarks/apache-spark/spark-unsa
   .settings(
     commonSettingsScala213,
     patchedJarPrefix := "spark-unsafe",
+    // The patched Platform class uses sun.misc.Unsafe, which is not part of the
+    // documented JDK 8 API, so it cannot be compiled with '--release 8'.
+    // Use '-source/-target 8' instead of '--release 11' so that the resulting
+    // class file (version 52) can also be loaded by a JDK 8 VM. The class only
+    // uses APIs and Unsafe methods that exist in Java 8.
+    Compile / javacOptions := Seq("-source", "8", "-target", "8", "-Xlint:-options"),
     libraryDependencies += ("org.apache.spark" %% "spark-unsafe" % sparkVersion intransitive ()),
     publishMavenStyle := false
   )
@@ -361,8 +374,8 @@ lazy val apacheSparkBenchmarks = (project in file("benchmarks/apache-spark"))
       "com.fasterxml.jackson.datatype" % "jackson-datatype-jsr310" % jacksonVersion,
       "com.fasterxml.jackson.module" %% "jackson-module-scala" % jacksonVersion,
       // Force common (newer) version of Arrow packages.
-      "org.apache.arrow" % "arrow-vector" % arrowVersion,
-      "org.apache.arrow" % "arrow-memory-netty" % arrowVersion,
+      "org.apache.arrow" % "arrow-vector" % sparkArrowVersion,
+      "org.apache.arrow" % "arrow-memory-netty" % sparkArrowVersion,
       // Force common (newer) version of Parquet packages.
       "org.apache.parquet" % "parquet-hadoop" % parquetVersion,
       // Force common (newer) version of Jersey packages.
@@ -447,7 +460,8 @@ lazy val databaseBenchmarks = (project in file("benchmarks/database"))
       "org.agrona" % "agrona" % "1.22.0",
       // Database libraries.
       "org.mapdb" % "mapdb" % "3.1.0",
-      "com.h2database" % "h2-mvstore" % "2.3.232",
+      // H2 2.x requires Java 11; 1.4.200 is the last Java 8 compatible release.
+      "com.h2database" % "h2-mvstore" % "1.4.200",
       // Chronicle Map 3.25+ supports Java 21.
       "net.openhft" % "chronicle-map" % chronicleMapVersion,
       // Add simple binding to silence SLF4J warnings.
@@ -488,10 +502,11 @@ lazy val jdkConcurrentBenchmarks = (project in file("benchmarks/jdk-concurrent")
     name := "jdk-concurrent",
     commonSettingsScala3,
     libraryDependencies ++= Seq(
+      // Jenetics 5.2.0 is the last to support Java 8.
       // Jenetics 6.3.0 is the last to support Java 11.
       // Jenetics 7.0.0 requires Java 17 and benchmark update.
       // Jenetics 8.0.0 requires Java 21 and benchmark update.
-      "io.jenetics" % "jenetics" % "6.3.0"
+      "io.jenetics" % "jenetics" % "5.2.0"
     )
   )
   .dependsOn(renaissanceCore % "provided")
@@ -663,7 +678,7 @@ lazy val twitterFinagleBenchmarks = (project in file("benchmarks/twitter-finagle
       // Force common (newer) version of Jackson packages.
       "com.fasterxml.jackson.module" %% "jackson-module-scala" % jacksonVersion,
       // Force common versions of other dependencies.
-      "com.github.ben-manes.caffeine" % "caffeine" % caffeineVersion,
+      "com.github.ben-manes.caffeine" % "caffeine" % finagleCaffeineVersion,
       "com.github.luben" % "zstd-jni" % zstdJniVersion,
       "org.scala-lang.modules" %% "scala-collection-compat" % scalaCollectionCompatVersion,
       "org.scala-lang.modules" %% "scala-parser-combinators" % scalaParserCombinatorsVersion
@@ -681,7 +696,7 @@ lazy val kotlinKtorBenchmarks = (project in file("benchmarks/kotlin-ktor"))
     // Without it, @Serializable compiles but produces no usable serializer.
     kotlinPlugin("serialization-compiler-plugin-embeddable"),
     kotlinVersion := "2.4.21",
-    kotlincJvmTarget := "11",
+    kotlincJvmTarget := "1.8",
     libraryDependencies ++= Seq(
       "io.ktor" % "ktor-server-core-jvm" % ktorVersion,
       "io.ktor" % "ktor-server-cio-jvm" % ktorVersion,

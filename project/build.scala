@@ -19,7 +19,7 @@ class BenchmarkInfo(
   /**
    * Default minimal JVM version for benchmarks that do not specify it explicitly.
    */
-  private val JVM_VERSION_MIN_DEFAULT = "11"
+  private val JVM_VERSION_MIN_DEFAULT = "1.8"
 
   private def kebabCase(s: String): String = {
     val camelCaseName = if (s.last == '$') s.init else s

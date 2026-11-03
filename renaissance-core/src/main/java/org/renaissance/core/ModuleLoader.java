@@ -7,7 +7,10 @@ import java.net.MalformedURLException;
 import java.net.URI;
 import java.net.URL;
 import java.net.URLClassLoader;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.LinkedHashSet;
 import java.util.Map;
@@ -123,7 +126,48 @@ public final class ModuleLoader {
     ));
 
     // Load module JARs from the resources.
-    return new URLClassLoader(jarResourceUrls, thisClass.getClassLoader());
+    return new URLClassLoader(
+      addToolsJarIfAvailable(jarResourceUrls), thisClass.getClassLoader()
+    );
+  }
+
+
+  /**
+   * On JDK 8, the Java compiler is distributed separately in {@code tools.jar}
+   * and is not part of the JRE, so it is not visible when the suite is started
+   * with {@code java -jar}. Some benchmarks compile generated code at run time
+   * (e.g. the Chronicle Map library used by db-shootout) and require access to
+   * a {@link javax.tools.JavaCompiler}, therefore we add {@code tools.jar} to
+   * the module class path if it is available.
+   */
+  private static URL[] addToolsJarIfAvailable(URL[] moduleJarUrls) {
+    if (!"1.8".equals(System.getProperty("java.specification.version"))) {
+      return moduleJarUrls;
+    }
+
+    // java.home points to the JRE directory in a JDK 8 installation.
+    Path javaHome = Paths.get(System.getProperty("java.home"));
+    Path[] candidates = {
+      javaHome.resolve("../lib/tools.jar"),
+      javaHome.resolve("lib/tools.jar")
+    };
+
+    for (Path candidate : candidates) {
+      if (Files.isRegularFile(candidate)) {
+        try {
+          URL toolsJarUrl = candidate.toUri().toURL();
+          URL[] result = Arrays.copyOf(moduleJarUrls, moduleJarUrls.length + 1);
+          result[moduleJarUrls.length] = toolsJarUrl;
+          return result;
+        } catch (MalformedURLException e) {
+          logger.warning(String.format(
+            "Failed to convert '%s' to URL", candidate
+          ));
+        }
+      }
+    }
+
+    return moduleJarUrls;
   }
 
 
